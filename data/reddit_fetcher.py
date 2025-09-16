@@ -16,11 +16,29 @@ import time
 from dataclasses import dataclass
 from collections import deque
 
+from .enums import (
+    PostDataKey,
+    CommentDataKey,
+    AuthorDataKey,
+    SubredditDataKey,
+    RedditMarker,
+    RedditAttribute,
+    RedditIdPrefix,
+    SortMethod,
+    TimeFilter,
+    ExceptionAttr,
+    HttpHeader,
+    HttpStatus,
+)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 5
 BASE_WAIT = 5
+EXP_BASE = 2
+
+
 
 
 @dataclass
@@ -64,23 +82,23 @@ class RedditFetcher:
 
     def _retry_delay_seconds(self, exc: Exception, fallback: float) -> Optional[float]:
         """Determine how long to wait after encountering a 429."""
-        sleep_time = getattr(exc, "sleep_time", None)
+        sleep_time = getattr(exc, ExceptionAttr.SLEEP_TIME.value, None)
         if sleep_time:
             try:
                 return float(sleep_time)
             except (TypeError, ValueError):
                 pass
 
-        response = getattr(exc, "response", None)
+        response = getattr(exc, ExceptionAttr.RESPONSE.value, None)
         if response is not None:
-            status_code = getattr(response, "status_code", None)
-            if status_code != 429:
+            status_code = getattr(response, ExceptionAttr.STATUS_CODE.value, None)
+            if status_code != HttpStatus.RATE_LIMITED.value:
                 return None
 
             headers = getattr(response, "headers", None)
             retry_after = None
             if headers:
-                retry_after = headers.get("Retry-After") or headers.get("retry-after")
+                retry_after = headers.get(HttpHeader.RETRY_AFTER.value) or headers.get(HttpHeader.RETRY_AFTER_LOWER.value)
 
             if retry_after is not None:
                 try:
@@ -91,7 +109,7 @@ class RedditFetcher:
             return float(fallback)
 
         message = str(exc)
-        if "429" in message:
+        if str(HttpStatus.RATE_LIMITED.value) in message:
             return float(fallback)
 
         return None
@@ -101,21 +119,21 @@ class RedditFetcher:
         if isinstance(exc, NotFound):
             return True
 
-        response = getattr(exc, "response", None)
-        if response is not None and getattr(response, "status_code", None) == 404:
+        response = getattr(exc, ExceptionAttr.RESPONSE.value, None)
+        if response is not None and getattr(response, ExceptionAttr.STATUS_CODE.value, None) == HttpStatus.NOT_FOUND.value:
             return True
 
-        status_code = getattr(exc, "status_code", None)
-        if status_code == 404:
+        status_code = getattr(exc, ExceptionAttr.STATUS_CODE.value, None)
+        if status_code == HttpStatus.NOT_FOUND.value:
             return True
 
         if isinstance(exc, RequestException):
-            resp = getattr(exc, "response", None)
-            if resp is not None and getattr(resp, "status_code", None) == 404:
+            resp = getattr(exc, ExceptionAttr.RESPONSE.value, None)
+            if resp is not None and getattr(resp, ExceptionAttr.STATUS_CODE.value, None) == HttpStatus.NOT_FOUND.value:
                 return True
 
         message = str(exc)
-        return "404" in message
+        return str(HttpStatus.NOT_FOUND.value) in message
 
     def _handle_rate_limit_retry(self, func, *args, **kwargs):
         """Handle rate limiting with exponential backoff"""
@@ -126,15 +144,16 @@ class RedditFetcher:
             try:
                 return func(*args, **kwargs)
             except (PrawcoreException, RequestException) as exc:
-                wait_time = self._retry_delay_seconds(exc, base_wait * (2 ** attempt))
+                wait_time = self._retry_delay_seconds(exc, base_wait * (EXP_BASE ** attempt))
             except Exception as exc:
-                wait_time = self._retry_delay_seconds(exc, base_wait * (2 ** attempt))
+                wait_time = self._retry_delay_seconds(exc, base_wait * (EXP_BASE ** attempt))
 
             if wait_time is None:
                 raise
 
             logger.warning(
-                "Rate limited (429). Waiting %s seconds (attempt %s/%s)",
+                "Rate limited (%s). Waiting %s seconds (attempt %s/%s)",
+                HttpStatus.RATE_LIMITED.value,
                 wait_time,
                 attempt + 1,
                 max_retries,
@@ -146,59 +165,67 @@ class RedditFetcher:
     def _extract_post_data(self, submission: Submission) -> Dict[str, Any]:
         """Extract relevant data from a Reddit submission"""
         return {
-            'post_id': f't3_{submission.id}',
-            'subreddit_id': submission.subreddit.id if hasattr(submission.subreddit, 'id') else None,
-            'subreddit_name': submission.subreddit.display_name,
-            'author_id': f't2_{submission.author.id}' if submission.author and hasattr(submission.author, 'id') else None,
-            'author_name': submission.author.name if submission.author else '[deleted]',
-            'title': submission.title,
-            'body': submission.selftext if submission.is_self else None,
-            'url': f'https://reddit.com{submission.permalink}',
-            'score': submission.score,
-            'num_comments': submission.num_comments,
-            'created_utc': datetime.utcfromtimestamp(submission.created_utc),
-            'is_deleted': submission.author is None,
-            'is_removed': submission.selftext == '[removed]' if submission.is_self else False,
-            'awards': len(submission.all_awardings) if hasattr(submission, 'all_awardings') else 0,
-            'upvote_ratio': submission.upvote_ratio if hasattr(submission, 'upvote_ratio') else None,
-            'is_stickied': submission.stickied,
-            'is_locked': submission.locked,
-            'is_nsfw': submission.over_18
+            PostDataKey.POST_ID.value: f"{RedditIdPrefix.POST.value}{submission.id}",
+            PostDataKey.SUBREDDIT_ID.value: submission.subreddit.id if hasattr(submission.subreddit, RedditAttribute.ID.value) else None,
+            PostDataKey.SUBREDDIT_NAME.value: submission.subreddit.display_name,
+            PostDataKey.AUTHOR_ID.value: (
+                f"{RedditIdPrefix.AUTHOR.value}{submission.author.id}"
+                if submission.author and hasattr(submission.author, RedditAttribute.ID.value)
+                else None
+            ),
+            PostDataKey.AUTHOR_NAME.value: submission.author.name if submission.author else RedditMarker.DELETED.value,
+            PostDataKey.TITLE.value: submission.title,
+            PostDataKey.BODY.value: submission.selftext if submission.is_self else None,
+            PostDataKey.URL.value: f'https://reddit.com{submission.permalink}',
+            PostDataKey.SCORE.value: submission.score,
+            PostDataKey.NUM_COMMENTS.value: submission.num_comments,
+            PostDataKey.CREATED_UTC.value: datetime.utcfromtimestamp(submission.created_utc),
+            PostDataKey.IS_DELETED.value: submission.author is None,
+            PostDataKey.IS_REMOVED.value: submission.selftext == RedditMarker.REMOVED.value if submission.is_self else False,
+            PostDataKey.AWARDS.value: len(submission.all_awardings) if hasattr(submission, RedditAttribute.ALL_AWARDINGS.value) else 0,
+            PostDataKey.UPVOTE_RATIO.value: submission.upvote_ratio if hasattr(submission, RedditAttribute.UPVOTE_RATIO.value) else None,
+            PostDataKey.IS_STICKIED.value: submission.stickied,
+            PostDataKey.IS_LOCKED.value: submission.locked,
+            PostDataKey.IS_NSFW.value: submission.over_18
         }
 
     def _extract_comment_data(self, comment: PrawComment, post_id: str) -> Dict[str, Any]:
         """Extract relevant data from a Reddit comment"""
         return {
-            'comment_id': f't1_{comment.id}',
-            'post_id': post_id,
-            'author_id': f't2_{comment.author.id}' if comment.author and hasattr(comment.author, 'id') else None,
-            'author_name': comment.author.name if comment.author else '[deleted]',
-            'parent_id': comment.parent_id,
-            'body': comment.body,
-            'score': comment.score,
-            'created_utc': datetime.utcfromtimestamp(comment.created_utc),
-            'is_deleted': comment.author is None,
-            'is_removed': comment.body == '[removed]',
-            'awards': len(comment.all_awardings) if hasattr(comment, 'all_awardings') else 0,
-            'is_stickied': comment.stickied,
-            'depth': comment.depth if hasattr(comment, 'depth') else 0
+            CommentDataKey.COMMENT_ID.value: f"{RedditIdPrefix.COMMENT.value}{comment.id}",
+            CommentDataKey.POST_ID.value: post_id,
+            CommentDataKey.AUTHOR_ID.value: (
+                f"{RedditIdPrefix.AUTHOR.value}{comment.author.id}"
+                if comment.author and hasattr(comment.author, RedditAttribute.ID.value)
+                else None
+            ),
+            CommentDataKey.AUTHOR_NAME.value: comment.author.name if comment.author else RedditMarker.DELETED.value,
+            CommentDataKey.PARENT_ID.value: comment.parent_id,
+            CommentDataKey.BODY.value: comment.body,
+            CommentDataKey.SCORE.value: comment.score,
+            CommentDataKey.CREATED_UTC.value: datetime.utcfromtimestamp(comment.created_utc),
+            CommentDataKey.IS_DELETED.value: comment.author is None,
+            CommentDataKey.IS_REMOVED.value: comment.body == RedditMarker.REMOVED.value,
+            CommentDataKey.AWARDS.value: len(comment.all_awardings) if hasattr(comment, RedditAttribute.ALL_AWARDINGS.value) else 0,
+            CommentDataKey.IS_STICKIED.value: comment.stickied,
+            CommentDataKey.DEPTH.value: comment.depth if hasattr(comment, RedditAttribute.DEPTH.value) else 0
         }
 
     def _extract_author_data(self, author) -> Optional[Dict[str, Any]]:
         """Extract relevant data from a Reddit author"""
-        if not author or author.name == '[deleted]':
+        if not author or author.name == RedditMarker.DELETED.value:
             return None
 
         try:
             return {
-                'author_id': f't2_{author.id}',
-                'name': author.name,
-                'comment_karma': author.comment_karma,
-                'link_karma': author.link_karma,
-                'created_utc': datetime.utcfromtimestamp(author.created_utc),
-                'is_mod': author.is_mod if hasattr(author, 'is_mod') else False,
-                'is_gold': author.is_gold if hasattr(author, 'is_gold') else False,
-                'verified': author.verified if hasattr(author, 'verified') else False
+                AuthorDataKey.AUTHOR_ID.value: f"{RedditIdPrefix.AUTHOR.value}{author.id}",
+                AuthorDataKey.NAME.value: author.name,
+                AuthorDataKey.COMMENT_KARMA.value: author.comment_karma,
+                AuthorDataKey.LINK_KARMA.value: author.link_karma,
+                AuthorDataKey.CREATED_UTC.value: datetime.utcfromtimestamp(author.created_utc),
+                AuthorDataKey.IS_MOD.value: author.is_mod if hasattr(author, RedditAttribute.IS_MOD.value) else False,
+                AuthorDataKey.IS_GOLD.value: author.is_gold if hasattr(author, RedditAttribute.IS_GOLD.value) else False,
+                AuthorDataKey.VERIFIED.value: author.verified if hasattr(author, RedditAttribute.VERIFIED.value) else False
             }
         except Exception as e:
             logger.warning(f"Could not fetch author data for {author.name}: {e}")
@@ -211,12 +238,12 @@ class RedditFetcher:
         def _fetch():
             subreddit = self.reddit.subreddit(subreddit_name)
             return {
-                'subreddit_id': f't5_{subreddit.id}',
-                'name': subreddit.display_name,
-                'subscriber_count': subreddit.subscribers,
-                'created_utc': datetime.utcfromtimestamp(subreddit.created_utc),
-                'description': subreddit.public_description,
-                'is_nsfw': subreddit.over18
+                SubredditDataKey.SUBREDDIT_ID.value: f"{RedditIdPrefix.SUBREDDIT.value}{subreddit.id}",
+                SubredditDataKey.NAME.value: subreddit.display_name,
+                SubredditDataKey.SUBSCRIBER_COUNT.value: subreddit.subscribers,
+                SubredditDataKey.CREATED_UTC.value: datetime.utcfromtimestamp(subreddit.created_utc),
+                SubredditDataKey.DESCRIPTION.value: subreddit.public_description,
+                SubredditDataKey.IS_NSFW.value: subreddit.over18
             }
 
         return self._handle_rate_limit_retry(_fetch)
@@ -226,7 +253,7 @@ class RedditFetcher:
         subreddit_name: str,
         start_time: datetime,
         end_time: datetime,
-        sort_by: str = 'new'
+        sort_by: str = SortMethod.NEW.value
     ) -> Generator[Dict[str, Any], None, None]:
         """
         Fetch posts from a subreddit within a specific timeframe
@@ -250,13 +277,13 @@ class RedditFetcher:
         logger.info(f"Fetching posts from r/{subreddit_name} between {start_time} and {end_time}")
 
         def _select_post_stream():
-            if sort_by == 'new':
+            if sort_by == SortMethod.NEW.value:
                 return subreddit.new(limit=None)
-            if sort_by == 'hot':
+            if sort_by == SortMethod.HOT.value:
                 return subreddit.hot(limit=None)
-            if sort_by == 'top':
-                return subreddit.top(limit=None, time_filter='all')
-            if sort_by == 'rising':
+            if sort_by == SortMethod.TOP.value:
+                return subreddit.top(limit=None, time_filter=TimeFilter.ALL.value)
+            if sort_by == SortMethod.RISING.value:
                 return subreddit.rising(limit=None)
             raise ValueError(f"Invalid sort_by value: {sort_by}")
 
@@ -265,20 +292,13 @@ class RedditFetcher:
         for submission in post_stream:
             self._rate_limit()
 
-            try:
-                # Try to access submission properties
-                created = submission.created_utc
-                author = submission.author
-            except Exception as e:
-                wait_time = self._retry_delay_seconds(e, BASE_WAIT)
-                if wait_time is not None:
-                    logger.warning(
-                        "Rate limited while reading submission. Waiting %s seconds...",
-                        wait_time,
-                    )
-                    time.sleep(wait_time)
-                    continue
+            def _touch_submission():
+                submission.created_utc
+                submission.author
 
+            try:
+                self._handle_rate_limit_retry(_touch_submission)
+            except Exception as e:
                 if self._is_not_found_error(e):
                     logger.warning(
                         "Skipping a submission in r/%s: %s",
@@ -286,8 +306,7 @@ class RedditFetcher:
                         e,
                     )
                     continue
-                else:
-                    raise
+                raise
 
             # Check if post is within timeframe
             if submission.created_utc < start_timestamp:
@@ -300,7 +319,7 @@ class RedditFetcher:
             # Skip deleted/removed posts if configured
             if not self.config.include_deleted and submission.author is None:
                 continue
-            if not self.config.include_removed and submission.selftext == '[removed]':
+            if not self.config.include_removed and submission.selftext == RedditMarker.REMOVED.value:
                 continue
 
             post_data = self._extract_post_data(submission)
@@ -330,8 +349,9 @@ class RedditFetcher:
             List of comment data dictionaries
         """
         # Clean post_id
-        if post_id.startswith('t3_'):
-            post_id = post_id[3:]
+        post_prefix = RedditIdPrefix.POST.value
+        if post_id.startswith(post_prefix):
+            post_id = post_id[len(post_prefix):]
 
         self._rate_limit()
 
@@ -349,7 +369,11 @@ class RedditFetcher:
             submission = self._handle_rate_limit_retry(_load_submission)
         except Exception as exc:
             if self._is_not_found_error(exc):
-                logger.warning("Post %s not found (404). Skipping comment fetch.", post_id)
+                logger.warning(
+                    "Post %s not found (%s). Skipping comment fetch.",
+                    post_id,
+                    HttpStatus.NOT_FOUND.value,
+                )
                 return []
             raise
 
@@ -369,14 +393,14 @@ class RedditFetcher:
             # Skip deleted/removed comments if configured
             if not self.config.include_deleted and comment.author is None:
                 continue
-            if not self.config.include_removed and comment.body == '[removed]':
+            if not self.config.include_removed and comment.body == RedditMarker.REMOVED.value:
                 continue
 
-            comment_data = self._extract_comment_data(comment, f't3_{post_id}')
+            comment_data = self._extract_comment_data(comment, f"{RedditIdPrefix.POST.value}{post_id}")
             comments.append(comment_data)
 
             # Add replies to queue if within depth limit
-            if comment_data['depth'] < self.config.max_comment_depth:
+            if comment_data[CommentDataKey.DEPTH.value] < self.config.max_comment_depth:
                 comment_queue.extend(comment.replies)
 
         logger.info(f"Fetched {len(comments)} comments for post {post_id}")
@@ -388,7 +412,7 @@ class RedditFetcher:
         start_time: datetime,
         end_time: datetime,
         fetch_comments: bool = True,
-        sort_by: str = 'new'
+        sort_by: str = SortMethod.NEW.value
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
         Fetch both posts and their comments from a subreddit within a timeframe
@@ -411,20 +435,21 @@ class RedditFetcher:
             posts.append(post_data)
 
             # Fetch comments for this post if requested
-            if fetch_comments and post_data['num_comments'] > 0:
+            if fetch_comments and post_data[PostDataKey.NUM_COMMENTS.value] > 0:
                 try:
-                    comments = self.fetch_comments_for_post(post_data['post_id'])
+                    comments = self.fetch_comments_for_post(post_data[PostDataKey.POST_ID.value])
                     all_comments.extend(comments)
                 except Exception as exc:
                     if self._is_not_found_error(exc):
                         logger.warning(
-                            "Skipping comments for post %s (404 response)",
-                            post_data['post_id'],
+                            "Skipping comments for post %s (%s response)",
+                            post_data[PostDataKey.POST_ID.value],
+                            HttpStatus.NOT_FOUND.value,
                         )
                     else:
                         logger.error(
                             "Error fetching comments for post %s: %s",
-                            post_data['post_id'],
+                            post_data[PostDataKey.POST_ID.value],
                             exc,
                         )
 
@@ -476,7 +501,7 @@ class RedditFetcher:
                 continue
 
             # Get the post ID from the comment's link_id
-            post_id = comment.link_id if hasattr(comment, 'link_id') else None
+            post_id = comment.link_id if hasattr(comment, RedditAttribute.LINK_ID.value) else None
             comments.append(self._extract_comment_data(comment, post_id))
 
         logger.info(f"Fetched {len(posts)} posts and {len(comments)} comments for user {username}")
