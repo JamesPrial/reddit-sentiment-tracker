@@ -1,0 +1,137 @@
+{
+  "primary_brand": {
+    "name": "Anthropic",
+    "products": ["Claude", "Claude Code", "Claude AI", "Claude 4", "Claude 3.5"],
+    "keywords": [
+      "anthropic", "claude", "claude code", "claude ai", "claude-4",
+      "claude 3", "claude 3.5", "claude 3.5 sonnet", "claude pro",
+      "constitutional ai", "claude api", "bedrock claude"
+    ],
+    "variations": [
+      "claude3", "claude35", "claude-35", "claudeai", "claude.ai"
+    ]
+  },
+  "competitors": [
+    {
+      "name": "OpenAI",
+      "products": ["ChatGPT", "GPT-4", "GPT-4o", "GPT-4 Turbo", "DALL-E"],
+      "keywords": [
+        "openai", "chatgpt", "gpt4", "gpt-4", "gpt4o", "gpt-4o",
+        "gpt-4-turbo", "chat gpt", "gpt", "dall-e", "dalle",
+        "gpt4 vision", "gpt-4v", "chatgpt plus", "gpt store"
+      ],
+      "variations": [
+        "chat-gpt", "gpt 4", "gpt 4o", "openai api"
+      ]
+    },
+    {
+      "name": "Google",
+      "products": ["Gemini", "Bard", "PaLM"],
+      "keywords": [
+        "google gemini", "gemini", "gemini pro", "gemini ultra",
+        "google bard", "bard", "palm", "palm2", "google ai",
+        "vertex ai", "gemini 1.5", "gemini advanced"
+      ],
+      "variations": [
+        "gemini-pro", "gemini-ultra", "palm-2"
+      ]
+    },
+    {
+      "name": "Microsoft",
+      "products": ["Copilot", "Bing Chat"],
+      "keywords": [
+        "microsoft copilot", "github copilot", "copilot",
+        "bing chat", "bing ai", "microsoft ai", "copilot pro",
+        "copilot x", "azure openai"
+      ],
+      "variations": [
+        "ms copilot", "gh copilot"
+      ]
+    },
+    {
+      "name": "Meta",
+      "products": ["Llama", "Llama 2", "Llama 3"],
+      "keywords": [
+        "meta ai", "llama", "llama2", "llama3", "llama 2",
+        "llama 3", "meta llama", "facebook ai", "llama-2",
+        "llama-3", "code llama", "codellama"
+      ],
+      "variations": [
+        "llama-2-70b", "llama-3-70b", "llama-2-13b"
+      ]
+    },
+    {
+      "name": "Mistral",
+      "products": ["Mistral", "Mixtral"],
+      "keywords": [
+        "mistral", "mistral ai", "mixtral", "mistral 7b",
+        "mistral medium", "mistral large", "mixtral 8x7b"
+      ],
+      "variations": [
+        "mistral-7b", "mixtral-8x7b"
+      ]
+    },
+    {
+      "name": "Perplexity",
+      "products": ["Perplexity AI"],
+      "keywords": [
+        "perplexity", "perplexity ai", "perplexity pro",
+        "pplx", "perplexity search"
+      ],
+      "variations": [
+        "perplexity.ai", "pplx api"
+      ]
+    },
+    {
+      "name": "xAI",
+      "products": ["Grok"],
+      "keywords": [
+        "grok", "xai", "x ai", "grok ai", "grok-1",
+        "grok 1.5", "x.ai"
+      ],
+      "variations": [
+        "grok-1", "grok1"
+      ]
+    }
+  ],
+  "neutral_terms": [
+    "llm", "ai", "artificial intelligence", "machine learning",
+    "neural network", "language model", "chatbot", "ai assistant",
+    "generative ai", "genai", "agi", "transformer"
+  ],
+  "sentiment_modifiers": {
+    "positive_indicators": [
+      "better than", "superior to", "beats", "destroys", "way better",
+      "much better", "prefer", "switched to", "moved to", "migrated to",
+      "best", "amazing", "excellent", "love", "fantastic", "great"
+    ],
+    "negative_indicators": [
+      "worse than", "inferior to", "loses to", "not as good as",
+      "switched from", "moved from", "migrated from", "left for",
+      "worst", "terrible", "awful", "hate", "sucks", "broken"
+    ],
+    "comparison_indicators": [
+      "vs", "versus", "compared to", "unlike", "whereas", "while",
+      "but", "however", "on the other hand", "in contrast"
+    ]
+  },
+  "context_patterns": {
+    "migration_positive": [
+      "switched from {competitor} to {brand}",
+      "moved from {competitor} to {brand}",
+      "replaced {competitor} with {brand}",
+      "{brand} is so much better than {competitor}"
+    ],
+    "migration_negative": [
+      "switched from {brand} to {competitor}",
+      "going back to {competitor}",
+      "moved to {competitor} from {brand}",
+      "{competitor} is better than {brand}"
+    ],
+    "feature_comparison": [
+      "{brand} can do X but {competitor} can't",
+      "{competitor} has X which {brand} lacks",
+      "unlike {competitor}, {brand}"
+    ]
+  }
+}

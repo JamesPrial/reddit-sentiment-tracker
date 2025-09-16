@@ -1,0 +1,13 @@
+# Core dependencies
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+praw>=7.7.0
+python-dotenv>=1.0.0
+schedule>=1.2.0
+
+# Sentiment Analysis
+anthropic>=0.18.0  # For Anthropic Claude API (optional)
+requests>=2.31.0   # For Ollama local model API
+
+# Utilities
+python-dateutil>=2.8.0

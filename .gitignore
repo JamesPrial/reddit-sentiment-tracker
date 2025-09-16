@@ -69,3 +69,6 @@ docs/_build/
 # Package files
 *.tar.gz
 *.zip
+
+# Misc.
+.claude/
