@@ -4,7 +4,6 @@ Data pipeline that integrates Reddit fetcher with database models
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 import logging
-import os
 import time
 from .reddit_fetcher import RedditFetcher, FetchConfig
 from .types import RawPost, RawComment, RawAuthor, RawSubreddit
@@ -16,9 +15,6 @@ from data import (
     PostRepository,
     CommentRepository,
 )
-from sentiment.pipeline import SentimentPipeline
-from sentiment.analyzer import get_analyzer
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -32,8 +28,7 @@ class RedditDataPipeline:
         reddit_client_secret: str,
         reddit_user_agent: str,
         db_connection_string: str,
-        enable_sentiment_analysis: bool = True,
-        sentiment_api_key: Optional[str] = None
+        enable_sentiment_analysis: bool = False
     ):
         """
         Initialize the data pipeline
@@ -43,6 +38,7 @@ class RedditDataPipeline:
             reddit_client_secret: Reddit API client secret
             reddit_user_agent: User agent for Reddit API
             db_connection_string: PostgreSQL connection string
+            enable_sentiment_analysis: Deprecated, kept for backward compatibility
         """
         # Initialize Reddit fetcher
         self.fetcher = RedditFetcher(reddit_client_id, reddit_client_secret, reddit_user_agent)
@@ -57,23 +53,9 @@ class RedditDataPipeline:
         self.post_repo = PostRepository(self.session)
         self.comment_repo = CommentRepository(self.session)
 
-        # Initialize sentiment analysis if enabled
-        self.enable_sentiment_analysis = enable_sentiment_analysis
-        self.sentiment_pipeline = None
+        # Sentiment analysis removed - should be handled at application level
         if enable_sentiment_analysis:
-            try:
-                # Try to use API analyzer if key is available
-                use_api = bool(sentiment_api_key or os.getenv('ANTHROPIC_API_KEY'))
-                analyzer = get_analyzer(use_api=use_api, api_key=sentiment_api_key)
-                self.sentiment_pipeline = SentimentPipeline(
-                    db_connection_string,
-                    analyzer=analyzer,
-                    batch_size=10
-                )
-                logger.info(f"Sentiment analysis enabled (API: {use_api})")
-            except Exception as e:
-                logger.warning(f"Could not initialize sentiment analysis: {e}")
-                self.enable_sentiment_analysis = False
+            logger.warning("Sentiment analysis in pipeline is deprecated. Handle at application level.")
 
         # Statistics
         self.stats = {
@@ -334,20 +316,7 @@ class RedditDataPipeline:
             # Commit all changes
             self.session.commit()
 
-            # Run sentiment analysis if enabled
-            if self.enable_sentiment_analysis and self.sentiment_pipeline:
-                logger.info("Running sentiment analysis on new content")
-                try:
-                    sentiment_stats = self.sentiment_pipeline.analyze_subreddit(
-                        subreddit_name,
-                        hours_back=0,  # Only analyze new content
-                        force=False
-                    )
-                    self.stats['sentiment_analysis'] = sentiment_stats
-                    logger.info(f"Sentiment analysis completed: {sentiment_stats}")
-                except Exception as e:
-                    logger.error(f"Error in sentiment analysis: {e}")
-                    self.stats['errors'].append(f"Sentiment error: {e}")
+            # Sentiment analysis should be handled at application level
 
         except Exception as e:
             logger.error(f"Error in fetch_and_store_subreddit: {e}")
@@ -492,7 +461,5 @@ class RedditDataPipeline:
         self.fetcher.stream_subreddit_posts(subreddit_name, process_callback, fetch_comments)
 
     def close(self):
-        """Close database session and sentiment pipeline"""
+        """Close database session"""
         self.session.close()
-        if self.sentiment_pipeline:
-            self.sentiment_pipeline.close()
