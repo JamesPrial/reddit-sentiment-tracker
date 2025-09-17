@@ -41,7 +41,7 @@ By default, the fetcher will:
 ### Basic Fetching (All Data)
 
 ```python
-from data.reddit_fetcher import RedditFetcher
+from reddit.reddit_fetcher import RedditFetcher
 from datetime import datetime, timedelta
 
 # Initialize fetcher
@@ -63,7 +63,7 @@ posts, comments = fetcher.fetch_posts_and_comments(
 ### With Database Storage
 
 ```python
-from data.pipeline import RedditDataPipeline
+from reddit.pipeline import RedditDataPipeline
 
 # Initialize pipeline
 pipeline = RedditDataPipeline(

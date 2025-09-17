@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, asc, and_, or_, func
-from models import Subreddit, Author, Post, Comment
+from .database import Subreddit, Author, Post, Comment
 
 
 class SubredditRepository:

@@ -67,10 +67,9 @@ python main.py monitor --interval 6
 ```
 reddit-sentiment-tracker/
 ├── main.py                  # Main CLI application
-├── models/                  # Database models
-├── data/                    # Data fetching modules
+├── data/                    # Database models and repositories
+├── reddit/                  # Reddit data fetching modules
 ├── sentiment/               # Sentiment analysis
-├── repository/              # Data access layer
 ├── config/                  # Configuration files
 ├── migrations/              # Database migrations
 ├── scripts/                 # Utility scripts

@@ -8,12 +8,12 @@ import os
 import time
 from .reddit_fetcher import RedditFetcher, FetchConfig
 from prawcore.exceptions import NotFound, ResponseException
-from models import DatabaseConnection
-from repository import (
+from data import (
+    DatabaseConnection,
     SubredditRepository,
     AuthorRepository,
     PostRepository,
-    CommentRepository
+    CommentRepository,
 )
 from sentiment.pipeline import SentimentPipeline
 from sentiment.analyzer import get_analyzer

@@ -9,8 +9,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from collections import defaultdict
 
-from models import DatabaseConnection, Post, Comment
-from repository import PostRepository, CommentRepository
+from data import DatabaseConnection, Post, Comment, PostRepository, CommentRepository
 from .analyzer import SentimentAnalyzer, SentimentResult, get_analyzer
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, text
@@ -435,7 +434,7 @@ class SentimentPipeline:
         logger.info(f"Analyzing sentiment for r/{subreddit_name}")
 
         # Get subreddit
-        from repository import SubredditRepository
+        from data import SubredditRepository
         subreddit_repo = SubredditRepository(self.session)
         subreddit = subreddit_repo.get_by_name(subreddit_name)
 

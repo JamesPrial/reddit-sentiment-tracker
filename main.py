@@ -11,10 +11,9 @@ from datetime import datetime, timedelta
 from typing import Optional
 from dotenv import load_dotenv
 
-from models import DatabaseConnection, Post, Comment
-from data import RedditDataPipeline
+from data import DatabaseConnection, Post, Comment, PostRepository, CommentRepository
+from reddit import RedditDataPipeline
 from sentiment import SentimentAnalyzer, SentimentPipeline, get_analyzer
-from repository import PostRepository, CommentRepository
 
 PAUSE_BEFORE_ANALYZE = 2  # seconds
 SECONDS_PER_HOUR = 3600

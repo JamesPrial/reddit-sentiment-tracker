@@ -112,7 +112,7 @@ results = analyzer.analyze_batch(texts)
 When `enable_sentiment_analysis=True` the data pipeline automatically runs the sentiment batcher after storing new content:
 
 ```python
-from data.pipeline import RedditDataPipeline
+from reddit.pipeline import RedditDataPipeline
 
 pipeline = RedditDataPipeline(
     reddit_client_id="...",
