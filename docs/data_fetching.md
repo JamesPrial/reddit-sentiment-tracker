@@ -60,6 +60,10 @@ posts, comments = fetcher.fetch_posts_and_comments(
 )
 ```
 
+The fetcher returns lists of dataclasses (`RawPost` and `RawComment`) defined in
+`reddit.types`, so each field is available via attribute access (for example,
+`posts[0].title`).
+
 ### With Database Storage
 
 ```python

@@ -2,12 +2,22 @@
 
 from .reddit_fetcher import (
     RedditFetcher,
-    FetchConfig
+    FetchConfig,
 )
 from .pipeline import RedditDataPipeline
+from .types import (
+    RawSubreddit,
+    RawAuthor,
+    RawPost,
+    RawComment,
+)
 
 __all__ = [
     'RedditFetcher',
     'FetchConfig',
-    'RedditDataPipeline'
+    'RedditDataPipeline',
+    'RawSubreddit',
+    'RawAuthor',
+    'RawPost',
+    'RawComment',
 ]

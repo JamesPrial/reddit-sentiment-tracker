@@ -10,17 +10,13 @@ from prawcore.exceptions import (
     PrawcoreException,
 )
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional, Generator, Tuple
+from typing import List, Optional, Generator, Tuple, Dict, Callable
 import logging
 import time
 from dataclasses import dataclass
 from collections import deque
 
-from .enums import (
-    PostDataKey,
-    CommentDataKey,
-    AuthorDataKey,
-    SubredditDataKey,
+from .types import (
     RedditMarker,
     RedditAttribute,
     RedditIdPrefix,
@@ -29,6 +25,10 @@ from .enums import (
     ExceptionAttr,
     HttpHeader,
     HttpStatus,
+    RawPost,
+    RawComment,
+    RawAuthor,
+    RawSubreddit,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -37,9 +37,6 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 5
 BASE_WAIT = 5
 EXP_BASE = 2
-
-
-
 
 @dataclass
 class FetchConfig:
@@ -162,89 +159,98 @@ class RedditFetcher:
 
         raise Exception(f"Max retries ({max_retries}) exceeded for rate limiting")
 
-    def _extract_post_data(self, submission: Submission) -> Dict[str, Any]:
-        """Extract relevant data from a Reddit submission"""
-        return {
-            PostDataKey.POST_ID.value: f"{RedditIdPrefix.POST.value}{submission.id}",
-            PostDataKey.SUBREDDIT_ID.value: submission.subreddit.id if hasattr(submission.subreddit, RedditAttribute.ID.value) else None,
-            PostDataKey.SUBREDDIT_NAME.value: submission.subreddit.display_name,
-            PostDataKey.AUTHOR_ID.value: (
-                f"{RedditIdPrefix.AUTHOR.value}{submission.author.id}"
-                if submission.author and hasattr(submission.author, RedditAttribute.ID.value)
-                else None
-            ),
-            PostDataKey.AUTHOR_NAME.value: submission.author.name if submission.author else RedditMarker.DELETED.value,
-            PostDataKey.TITLE.value: submission.title,
-            PostDataKey.BODY.value: submission.selftext if submission.is_self else None,
-            PostDataKey.URL.value: f'https://reddit.com{submission.permalink}',
-            PostDataKey.SCORE.value: submission.score,
-            PostDataKey.NUM_COMMENTS.value: submission.num_comments,
-            PostDataKey.CREATED_UTC.value: datetime.utcfromtimestamp(submission.created_utc),
-            PostDataKey.IS_DELETED.value: submission.author is None,
-            PostDataKey.IS_REMOVED.value: submission.selftext == RedditMarker.REMOVED.value if submission.is_self else False,
-            PostDataKey.AWARDS.value: len(submission.all_awardings) if hasattr(submission, RedditAttribute.ALL_AWARDINGS.value) else 0,
-            PostDataKey.UPVOTE_RATIO.value: submission.upvote_ratio if hasattr(submission, RedditAttribute.UPVOTE_RATIO.value) else None,
-            PostDataKey.IS_STICKIED.value: submission.stickied,
-            PostDataKey.IS_LOCKED.value: submission.locked,
-            PostDataKey.IS_NSFW.value: submission.over_18
-        }
+    def _extract_post_data(self, submission: Submission) -> RawPost:
+        """Extract relevant data from a Reddit submission."""
+        subreddit_id = (
+            submission.subreddit.id
+            if hasattr(submission.subreddit, RedditAttribute.ID.value)
+            else None
+        )
+        author_id = (
+            f"{RedditIdPrefix.AUTHOR.value}{submission.author.id}"
+            if submission.author and hasattr(submission.author, RedditAttribute.ID.value)
+            else None
+        )
 
-    def _extract_comment_data(self, comment: PrawComment, post_id: str) -> Dict[str, Any]:
-        """Extract relevant data from a Reddit comment"""
-        return {
-            CommentDataKey.COMMENT_ID.value: f"{RedditIdPrefix.COMMENT.value}{comment.id}",
-            CommentDataKey.POST_ID.value: post_id,
-            CommentDataKey.AUTHOR_ID.value: (
-                f"{RedditIdPrefix.AUTHOR.value}{comment.author.id}"
-                if comment.author and hasattr(comment.author, RedditAttribute.ID.value)
-                else None
-            ),
-            CommentDataKey.AUTHOR_NAME.value: comment.author.name if comment.author else RedditMarker.DELETED.value,
-            CommentDataKey.PARENT_ID.value: comment.parent_id,
-            CommentDataKey.BODY.value: comment.body,
-            CommentDataKey.SCORE.value: comment.score,
-            CommentDataKey.CREATED_UTC.value: datetime.utcfromtimestamp(comment.created_utc),
-            CommentDataKey.IS_DELETED.value: comment.author is None,
-            CommentDataKey.IS_REMOVED.value: comment.body == RedditMarker.REMOVED.value,
-            CommentDataKey.AWARDS.value: len(comment.all_awardings) if hasattr(comment, RedditAttribute.ALL_AWARDINGS.value) else 0,
-            CommentDataKey.IS_STICKIED.value: comment.stickied,
-            CommentDataKey.DEPTH.value: comment.depth if hasattr(comment, RedditAttribute.DEPTH.value) else 0
-        }
+        return RawPost(
+            post_id=f"{RedditIdPrefix.POST.value}{submission.id}",
+            subreddit_id=subreddit_id,
+            subreddit_name=submission.subreddit.display_name,
+            author_id=author_id,
+            author_name=submission.author.name if submission.author else RedditMarker.DELETED.value,
+            title=submission.title,
+            body=submission.selftext if submission.is_self else None,
+            url=f"https://reddit.com{submission.permalink}",
+            score=submission.score,
+            num_comments=submission.num_comments,
+            created_utc=datetime.utcfromtimestamp(submission.created_utc),
+            is_deleted=submission.author is None,
+            is_removed=submission.selftext == RedditMarker.REMOVED.value if submission.is_self else False,
+            awards=len(submission.all_awardings) if hasattr(submission, RedditAttribute.ALL_AWARDINGS.value) else 0,
+            upvote_ratio=submission.upvote_ratio if hasattr(submission, RedditAttribute.UPVOTE_RATIO.value) else None,
+            is_stickied=submission.stickied,
+            is_locked=submission.locked,
+            is_nsfw=submission.over_18,
+        )
 
-    def _extract_author_data(self, author) -> Optional[Dict[str, Any]]:
-        """Extract relevant data from a Reddit author"""
+    def _extract_comment_data(self, comment: PrawComment, post_id: str) -> RawComment:
+        """Extract relevant data from a Reddit comment."""
+        author_id = (
+            f"{RedditIdPrefix.AUTHOR.value}{comment.author.id}"
+            if comment.author and hasattr(comment.author, RedditAttribute.ID.value)
+            else None
+        )
+
+        return RawComment(
+            comment_id=f"{RedditIdPrefix.COMMENT.value}{comment.id}",
+            post_id=post_id,
+            author_id=author_id,
+            author_name=comment.author.name if comment.author else RedditMarker.DELETED.value,
+            parent_id=comment.parent_id,
+            body=comment.body,
+            score=comment.score,
+            created_utc=datetime.utcfromtimestamp(comment.created_utc),
+            is_deleted=comment.author is None,
+            is_removed=comment.body == RedditMarker.REMOVED.value,
+            awards=len(comment.all_awardings) if hasattr(comment, RedditAttribute.ALL_AWARDINGS.value) else 0,
+            is_stickied=comment.stickied,
+            depth=comment.depth if hasattr(comment, RedditAttribute.DEPTH.value) else 0,
+        )
+
+    def _extract_author_data(self, author) -> Optional[RawAuthor]:
+        """Extract relevant data from a Reddit author."""
         if not author or author.name == RedditMarker.DELETED.value:
             return None
 
         try:
-            return {
-                AuthorDataKey.AUTHOR_ID.value: f"{RedditIdPrefix.AUTHOR.value}{author.id}",
-                AuthorDataKey.NAME.value: author.name,
-                AuthorDataKey.COMMENT_KARMA.value: author.comment_karma,
-                AuthorDataKey.LINK_KARMA.value: author.link_karma,
-                AuthorDataKey.CREATED_UTC.value: datetime.utcfromtimestamp(author.created_utc),
-                AuthorDataKey.IS_MOD.value: author.is_mod if hasattr(author, RedditAttribute.IS_MOD.value) else False,
-                AuthorDataKey.IS_GOLD.value: author.is_gold if hasattr(author, RedditAttribute.IS_GOLD.value) else False,
-                AuthorDataKey.VERIFIED.value: author.verified if hasattr(author, RedditAttribute.VERIFIED.value) else False
-            }
+            return RawAuthor(
+                author_id=f"{RedditIdPrefix.AUTHOR.value}{author.id}",
+                author_name=author.name,
+                comment_karma=author.comment_karma,
+                link_karma=author.link_karma,
+                created_utc=datetime.utcfromtimestamp(author.created_utc),
+                is_mod=author.is_mod if hasattr(author, RedditAttribute.IS_MOD.value) else False,
+                is_gold=author.is_gold if hasattr(author, RedditAttribute.IS_GOLD.value) else False,
+                verified=author.verified if hasattr(author, RedditAttribute.VERIFIED.value) else False,
+            )
         except Exception as e:
             logger.warning(f"Could not fetch author data for {author.name}: {e}")
             return None
 
-    def fetch_subreddit_info(self, subreddit_name: str) -> Dict[str, Any]:
+    def fetch_subreddit_info(self, subreddit_name: str) -> RawSubreddit:
         """Fetch information about a subreddit with rate limit handling"""
         self._rate_limit()
 
         def _fetch():
             subreddit = self.reddit.subreddit(subreddit_name)
-            return {
-                SubredditDataKey.SUBREDDIT_ID.value: f"{RedditIdPrefix.SUBREDDIT.value}{subreddit.id}",
-                SubredditDataKey.NAME.value: subreddit.display_name,
-                SubredditDataKey.SUBSCRIBER_COUNT.value: subreddit.subscribers,
-                SubredditDataKey.CREATED_UTC.value: datetime.utcfromtimestamp(subreddit.created_utc),
-                SubredditDataKey.DESCRIPTION.value: subreddit.public_description,
-                SubredditDataKey.IS_NSFW.value: subreddit.over18
-            }
+            return RawSubreddit(
+                subreddit_id=f"{RedditIdPrefix.SUBREDDIT.value}{subreddit.id}",
+                name=subreddit.display_name,
+                subscriber_count=subreddit.subscribers,
+                created_utc=datetime.utcfromtimestamp(subreddit.created_utc),
+                description=subreddit.public_description,
+                is_nsfw=subreddit.over18,
+            )
 
         return self._handle_rate_limit_retry(_fetch)
 
@@ -254,7 +260,7 @@ class RedditFetcher:
         start_time: datetime,
         end_time: datetime,
         sort_by: str = SortMethod.NEW.value
-    ) -> Generator[Dict[str, Any], None, None]:
+    ) -> Generator[RawPost, None, None]:
         """
         Fetch posts from a subreddit within a specific timeframe
 
@@ -265,7 +271,7 @@ class RedditFetcher:
             sort_by: Sort method ('new', 'hot', 'top', 'rising')
 
         Yields:
-            Post data dictionaries
+            RawPost instances
         """
         subreddit = self.reddit.subreddit(subreddit_name)
         posts_fetched = 0
@@ -337,7 +343,7 @@ class RedditFetcher:
         self,
         post_id: str,
         max_comments: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+    ) -> List[RawComment]:
         """
         Fetch all comments for a specific post
 
@@ -346,7 +352,7 @@ class RedditFetcher:
             max_comments: Maximum number of comments to fetch
 
         Returns:
-            List of comment data dictionaries
+            List of RawComment instances
         """
         # Clean post_id
         post_prefix = RedditIdPrefix.POST.value
@@ -400,7 +406,7 @@ class RedditFetcher:
             comments.append(comment_data)
 
             # Add replies to queue if within depth limit
-            if comment_data[CommentDataKey.DEPTH.value] < self.config.max_comment_depth:
+            if comment_data.depth < self.config.max_comment_depth:
                 comment_queue.extend(comment.replies)
 
         logger.info(f"Fetched {len(comments)} comments for post {post_id}")
@@ -413,7 +419,7 @@ class RedditFetcher:
         end_time: datetime,
         fetch_comments: bool = True,
         sort_by: str = SortMethod.NEW.value
-    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    ) -> Tuple[List[RawPost], List[RawComment]]:
         """
         Fetch both posts and their comments from a subreddit within a timeframe
 
@@ -435,21 +441,21 @@ class RedditFetcher:
             posts.append(post_data)
 
             # Fetch comments for this post if requested
-            if fetch_comments and post_data[PostDataKey.NUM_COMMENTS.value] > 0:
+            if fetch_comments and (post_data.num_comments or 0) > 0:
                 try:
-                    comments = self.fetch_comments_for_post(post_data[PostDataKey.POST_ID.value])
+                    comments = self.fetch_comments_for_post(post_data.post_id)
                     all_comments.extend(comments)
                 except Exception as exc:
                     if self._is_not_found_error(exc):
                         logger.warning(
                             "Skipping comments for post %s (%s response)",
-                            post_data[PostDataKey.POST_ID.value],
+                            post_data.post_id,
                             HttpStatus.NOT_FOUND.value,
                         )
                     else:
                         logger.error(
                             "Error fetching comments for post %s: %s",
-                            post_data[PostDataKey.POST_ID.value],
+                            post_data.post_id,
                             exc,
                         )
 
@@ -461,7 +467,7 @@ class RedditFetcher:
         username: str,
         start_time: datetime,
         end_time: datetime
-    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    ) -> Tuple[List[RawPost], List[RawComment]]:
         """
         Fetch a user's posts and comments within a timeframe
 
@@ -513,7 +519,7 @@ class RedditFetcher:
         start_time: datetime,
         end_time: datetime,
         fetch_comments: bool = True
-    ) -> Dict[str, Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]:
+    ) -> Dict[str, Tuple[List[RawPost], List[RawComment]]]:
         """
         Fetch data from multiple subreddits
 
@@ -544,7 +550,7 @@ class RedditFetcher:
     def stream_subreddit_posts(
         self,
         subreddit_name: str,
-        process_callback: callable,
+        process_callback: Callable[[RawPost, List[RawComment]], None],
         fetch_comments: bool = True
     ):
         """
@@ -552,7 +558,7 @@ class RedditFetcher:
 
         Args:
             subreddit_name: Name of the subreddit
-            process_callback: Function to call for each new post
+            process_callback: Callback receiving (`RawPost`, `List[RawComment]`)
             fetch_comments: Whether to fetch comments for new posts
         """
         subreddit = self.reddit.subreddit(subreddit_name)

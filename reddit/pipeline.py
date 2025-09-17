@@ -7,6 +7,7 @@ import logging
 import os
 import time
 from .reddit_fetcher import RedditFetcher, FetchConfig
+from .types import RawPost, RawComment, RawAuthor, RawSubreddit
 from prawcore.exceptions import NotFound, ResponseException
 from data import (
     DatabaseConnection,
@@ -83,52 +84,50 @@ class RedditDataPipeline:
             'errors': []
         }
 
-    def _process_subreddit(self, subreddit_data: Dict[str, Any]) -> Optional[str]:
+    def _process_subreddit(self, subreddit_data: RawSubreddit) -> Optional[str]:
         """Process and store subreddit information"""
         try:
             subreddit = self.subreddit_repo.create_or_update(
-                subreddit_id=subreddit_data['subreddit_id'],
-                name=subreddit_data['name'],
-                subscriber_count=subreddit_data.get('subscriber_count'),
-                created_utc=subreddit_data.get('created_utc')
+                subreddit_id=subreddit_data.subreddit_id,
+                name=subreddit_data.name,
+                subscriber_count=subreddit_data.subscriber_count,
+                created_utc=subreddit_data.created_utc,
             )
             self.stats['subreddits_processed'] += 1
             return subreddit.subreddit_id
         except Exception as e:
-            logger.error(f"Error processing subreddit {subreddit_data.get('name')}: {e}")
+            logger.error(f"Error processing subreddit {subreddit_data.name}: {e}")
             self.stats['errors'].append(f"Subreddit error: {e}")
             return None
 
-    def _process_author(self, author_data: Dict[str, Any]) -> Optional[str]:
+    def _process_author(self, author_data: RawAuthor) -> Optional[str]:
         """Process and store author information"""
-        if not author_data or author_data.get('author_name') == '[deleted]':
+        if not author_data or author_data.author_name == '[deleted]':
             return None
 
         try:
             # Try to fetch full author data if we only have basic info
-            if 'comment_karma' not in author_data:
+            if author_data.comment_karma is None:
                 try:
-                    author_obj = self.fetcher.reddit.redditor(author_data['author_name'])
-                    author_data.update({
-                        'comment_karma': author_obj.comment_karma,
-                        'link_karma': author_obj.link_karma,
-                        'created_utc': datetime.utcfromtimestamp(author_obj.created_utc)
-                    })
-                except:
+                    author_obj = self.fetcher.reddit.redditor(author_data.author_name)
+                    author_data.comment_karma = author_obj.comment_karma
+                    author_data.link_karma = author_obj.link_karma
+                    author_data.created_utc = datetime.utcfromtimestamp(author_obj.created_utc)
+                except Exception:
                     # If we can't fetch full data, use what we have
                     pass
 
             author = self.author_repo.create_or_update(
-                author_id=author_data['author_id'],
-                name=author_data['author_name'],
-                comment_karma=author_data.get('comment_karma'),
-                link_karma=author_data.get('link_karma'),
-                created_utc=author_data.get('created_utc')
+                author_id=author_data.author_id,
+                name=author_data.author_name,
+                comment_karma=author_data.comment_karma,
+                link_karma=author_data.link_karma,
+                created_utc=author_data.created_utc,
             )
             self.stats['authors_processed'] += 1
             return author.author_id
         except Exception as e:
-            logger.error(f"Error processing author {author_data.get('author_name')}: {e}")
+            logger.error(f"Error processing author {author_data.author_name}: {e}")
             self.stats['errors'].append(f"Author error: {e}")
             # Rollback the session to clear the error state
             try:
@@ -137,33 +136,35 @@ class RedditDataPipeline:
                 pass
             return None
 
-    def _process_post(self, post_data: Dict[str, Any]) -> Optional[str]:
+    def _process_post(self, post_data: RawPost) -> Optional[str]:
         """Process and store post information"""
         try:
             # Process author first if exists
             author_id = None
-            if post_data.get('author_name') and post_data['author_name'] != '[deleted]':
-                author_id = self._process_author({
-                    'author_id': post_data.get('author_id'),
-                    'author_name': post_data.get('author_name')
-                })
+            if post_data.author_name and post_data.author_name != '[deleted]':
+                author_id = self._process_author(
+                    RawAuthor(
+                        author_id=post_data.author_id,
+                        author_name=post_data.author_name,
+                    )
+                )
 
             post = self.post_repo.create_or_update(
-                post_id=post_data['post_id'],
-                subreddit_id=post_data['subreddit_id'],
+                post_id=post_data.post_id,
+                subreddit_id=post_data.subreddit_id,
                 author_id=author_id,
-                title=post_data['title'],
-                body=post_data.get('body'),
-                url=post_data.get('url'),
-                score=post_data.get('score'),
-                num_comments=post_data.get('num_comments'),
-                created_utc=post_data.get('created_utc'),
+                title=post_data.title,
+                body=post_data.body,
+                url=post_data.url,
+                score=post_data.score,
+                num_comments=post_data.num_comments,
+                created_utc=post_data.created_utc,
                 last_scraped_utc=datetime.utcnow()
             )
             self.stats['posts_processed'] += 1
             return post.post_id
         except Exception as e:
-            logger.error(f"Error processing post {post_data.get('post_id')}: {e}")
+            logger.error(f"Error processing post {post_data.post_id}: {e}")
             self.stats['errors'].append(f"Post error: {e}")
             # Rollback the session to clear the error state
             try:
@@ -172,31 +173,33 @@ class RedditDataPipeline:
                 pass
             return None
 
-    def _process_comment(self, comment_data: Dict[str, Any]) -> Optional[str]:
+    def _process_comment(self, comment_data: RawComment) -> Optional[str]:
         """Process and store comment information"""
         try:
             # Process author first if exists
             author_id = None
-            if comment_data.get('author_name') and comment_data['author_name'] != '[deleted]':
-                author_id = self._process_author({
-                    'author_id': comment_data.get('author_id'),
-                    'author_name': comment_data.get('author_name')
-                })
+            if comment_data.author_name and comment_data.author_name != '[deleted]':
+                author_id = self._process_author(
+                    RawAuthor(
+                        author_id=comment_data.author_id,
+                        author_name=comment_data.author_name,
+                    )
+                )
 
             comment = self.comment_repo.create_or_update(
-                comment_id=comment_data['comment_id'],
-                post_id=comment_data['post_id'],
+                comment_id=comment_data.comment_id,
+                post_id=comment_data.post_id,
                 author_id=author_id,
-                parent_id=comment_data.get('parent_id'),
-                body=comment_data['body'],
-                score=comment_data.get('score'),
-                created_utc=comment_data.get('created_utc'),
+                parent_id=comment_data.parent_id,
+                body=comment_data.body,
+                score=comment_data.score,
+                created_utc=comment_data.created_utc,
                 last_scraped_utc=datetime.utcnow()
             )
             self.stats['comments_processed'] += 1
             return comment.comment_id
         except Exception as e:
-            logger.error(f"Error processing comment {comment_data.get('comment_id')}: {e}")
+            logger.error(f"Error processing comment {comment_data.comment_id}: {e}")
             self.stats['errors'].append(f"Comment error: {e}")
             # Rollback the session to clear the error state
             try:
@@ -321,7 +324,7 @@ class RedditDataPipeline:
             # Process posts
             for post_data in posts:
                 # Ensure subreddit_id is set
-                post_data['subreddit_id'] = subreddit_id
+                post_data.subreddit_id = subreddit_id
                 self._process_post(post_data)
 
             # Process comments
@@ -419,8 +422,8 @@ class RedditDataPipeline:
                     # Update post
                     self.post_repo.create_or_update(
                         post_id=post.post_id,
-                        score=post_data['score'],
-                        num_comments=post_data['num_comments'],
+                        score=post_data.score,
+                        num_comments=post_data.num_comments,
                         last_scraped_utc=datetime.utcnow()
                     )
                     self.stats['posts_updated'] += 1
@@ -461,17 +464,17 @@ class RedditDataPipeline:
         subreddit_info = self.fetcher.fetch_subreddit_info(subreddit_name)
         subreddit_id = self._process_subreddit(subreddit_info)
 
-        def process_callback(post_data: Dict[str, Any], comments: List[Dict[str, Any]]):
+        def process_callback(post_data: RawPost, comments: List[RawComment]):
             """Callback to process each new post"""
             try:
                 # Ensure subreddit_id is set
-                post_data['subreddit_id'] = subreddit_id
+                post_data.subreddit_id = subreddit_id
 
                 # Process post
                 post_id = self._process_post(post_data)
 
                 if post_id:
-                    logger.info(f"Stored new post: {post_data['title'][:50]}...")
+                    logger.info(f"Stored new post: {post_data.title[:50]}...")
 
                     # Process comments
                     for comment_data in comments:
