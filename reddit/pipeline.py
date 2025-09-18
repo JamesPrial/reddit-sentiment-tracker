@@ -3,10 +3,11 @@ Data pipeline that integrates Reddit fetcher with database models
 """
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
+from dataclasses import asdict
 import logging
 import time
 from .reddit_fetcher import RedditFetcher, FetchConfig
-from .types import RawPost, RawComment, RawAuthor, RawSubreddit
+from .types import FetchStatistics, RawPost, RawComment, RawAuthor, RawSubreddit, RedditMarker, SortMethod, StaleStatistics, RedditIdPrefix
 from prawcore.exceptions import NotFound, ResponseException
 from data import (
     DatabaseConnection,
@@ -58,13 +59,8 @@ class RedditDataPipeline:
             logger.warning("Sentiment analysis in pipeline is deprecated. Handle at application level.")
 
         # Statistics
-        self.stats = {
-            'subreddits_processed': 0,
-            'posts_processed': 0,
-            'comments_processed': 0,
-            'authors_processed': 0,
-            'errors': []
-        }
+        self.stats = FetchStatistics()
+
 
     def _process_subreddit(self, subreddit_data: RawSubreddit) -> Optional[str]:
         """Process and store subreddit information"""
@@ -75,16 +71,16 @@ class RedditDataPipeline:
                 subscriber_count=subreddit_data.subscriber_count,
                 created_utc=subreddit_data.created_utc,
             )
-            self.stats['subreddits_processed'] += 1
-            return subreddit.subreddit_id
+            self.stats.subreddits_processed += 1
+            return str(subreddit.subreddit_id)
         except Exception as e:
             logger.error(f"Error processing subreddit {subreddit_data.name}: {e}")
-            self.stats['errors'].append(f"Subreddit error: {e}")
+            self.stats.errors.append(f"Subreddit error: {e}")
             return None
 
     def _process_author(self, author_data: RawAuthor) -> Optional[str]:
         """Process and store author information"""
-        if not author_data or author_data.author_name == '[deleted]':
+        if not author_data or author_data.author_name == RedditMarker.DELETED.value:
             return None
 
         try:
@@ -94,7 +90,7 @@ class RedditDataPipeline:
                     author_obj = self.fetcher.reddit.redditor(author_data.author_name)
                     author_data.comment_karma = author_obj.comment_karma
                     author_data.link_karma = author_obj.link_karma
-                    author_data.created_utc = datetime.utcfromtimestamp(author_obj.created_utc)
+                    author_data.created_utc = datetime.fromtimestamp(author_obj.created_utc)
                 except Exception:
                     # If we can't fetch full data, use what we have
                     pass
@@ -106,11 +102,11 @@ class RedditDataPipeline:
                 link_karma=author_data.link_karma,
                 created_utc=author_data.created_utc,
             )
-            self.stats['authors_processed'] += 1
-            return author.author_id
+            self.stats.authors_processed += 1
+            return str(author.author_id)
         except Exception as e:
             logger.error(f"Error processing author {author_data.author_name}: {e}")
-            self.stats['errors'].append(f"Author error: {e}")
+            self.stats.errors.append(f"Author error: {e}")
             # Rollback the session to clear the error state
             try:
                 self.session.rollback()
@@ -123,7 +119,7 @@ class RedditDataPipeline:
         try:
             # Process author first if exists
             author_id = None
-            if post_data.author_name and post_data.author_name != '[deleted]':
+            if post_data.author_name and post_data.author_name != RedditMarker.DELETED.value:
                 author_id = self._process_author(
                     RawAuthor(
                         author_id=post_data.author_id,
@@ -141,13 +137,13 @@ class RedditDataPipeline:
                 score=post_data.score,
                 num_comments=post_data.num_comments,
                 created_utc=post_data.created_utc,
-                last_scraped_utc=datetime.utcnow()
+                last_scraped_utc=datetime.now()
             )
-            self.stats['posts_processed'] += 1
-            return post.post_id
+            self.stats.posts_processed += 1
+            return str(post.post_id)
         except Exception as e:
             logger.error(f"Error processing post {post_data.post_id}: {e}")
-            self.stats['errors'].append(f"Post error: {e}")
+            self.stats.errors.append(f"Post error: {e}")
             # Rollback the session to clear the error state
             try:
                 self.session.rollback()
@@ -160,7 +156,7 @@ class RedditDataPipeline:
         try:
             # Process author first if exists
             author_id = None
-            if comment_data.author_name and comment_data.author_name != '[deleted]':
+            if comment_data.author_name and comment_data.author_name != RedditMarker.DELETED.value:
                 author_id = self._process_author(
                     RawAuthor(
                         author_id=comment_data.author_id,
@@ -176,13 +172,13 @@ class RedditDataPipeline:
                 body=comment_data.body,
                 score=comment_data.score,
                 created_utc=comment_data.created_utc,
-                last_scraped_utc=datetime.utcnow()
+                last_scraped_utc=datetime.now()
             )
-            self.stats['comments_processed'] += 1
-            return comment.comment_id
+            self.stats.comments_processed += 1
+            return str(comment.comment_id)
         except Exception as e:
             logger.error(f"Error processing comment {comment_data.comment_id}: {e}")
-            self.stats['errors'].append(f"Comment error: {e}")
+            self.stats.errors.append(f"Comment error: {e}")
             # Rollback the session to clear the error state
             try:
                 self.session.rollback()
@@ -196,8 +192,8 @@ class RedditDataPipeline:
         start_time: datetime,
         end_time: datetime,
         fetch_comments: bool = True,
-        sort_by: str = 'new'
-    ) -> Dict[str, Any]:
+        sort_by: str = SortMethod.NEW.value
+    ) -> FetchStatistics:
         """
         Fetch and store all posts and comments from a subreddit within a timeframe
 
@@ -214,95 +210,20 @@ class RedditDataPipeline:
         logger.info(f"Starting fetch for r/{subreddit_name} from {start_time} to {end_time}")
 
         # Reset stats
-        self.stats = {
-            'subreddits_processed': 0,
-            'posts_processed': 0,
-            'comments_processed': 0,
-            'authors_processed': 0,
-            'errors': []
-        }
+        self.stats = FetchStatistics()
 
-        try:
             # Fetch and store subreddit info
-            subreddit_info = self.fetcher.fetch_subreddit_info(subreddit_name)
-            subreddit_id = self._process_subreddit(subreddit_info)
+        subreddit_info = self.fetcher.fetch_subreddit_info(subreddit_name)
+        subreddit_id = self._process_subreddit(subreddit_info)
 
-            if not subreddit_id:
-                logger.error(f"Failed to process subreddit {subreddit_name}")
-                return self.stats
-
-            # Fetch posts and comments with retry on rate limits
-            attempts = 0
-            max_attempts = 5
-            while True:
-                try:
-                    posts, comments = self.fetcher.fetch_posts_and_comments(
-                        subreddit_name, start_time, end_time, fetch_comments, sort_by
-                    )
-                    break
-                except NotFound:
-                    logger.warning(
-                        f"Subreddit r/{subreddit_name} returned 404 during fetch; skipping posts"
-                    )
-                    posts, comments = [], []
-                    break
-                except ResponseException as e:
-                    if getattr(e, 'response', None) and e.response.status_code == 404:
-                        logger.warning(
-                            f"Received 404 response when fetching r/{subreddit_name}; continuing with no posts"
-                        )
-                        posts, comments = [], []
-                        break
-                    error_message = str(e).lower()
-                    if '429' in error_message or 'too many requests' in error_message:
-                        attempts += 1
-                        if attempts >= max_attempts:
-                            logger.error(
-                                f"Rate limit exceeded for r/{subreddit_name} after {attempts} attempts"
-                            )
-                            self.session.rollback()
-                            self.stats['errors'].append(
-                                f"Rate limit: r/{subreddit_name} after {attempts} attempts"
-                            )
-                            return self.stats
-                        wait_seconds = max(self.fetcher.config.rate_limit_delay, 1.0) * (2 ** attempts)
-                        logger.warning(
-                            f"Rate limited when fetching r/{subreddit_name}. "
-                            f"Retrying in {wait_seconds:.1f} seconds (attempt {attempts}/{max_attempts})"
-                        )
-                        time.sleep(wait_seconds)
-                        continue
-                    else:
-                        raise
-                except Exception as e:
-                    error_message = str(e).lower()
-                    if '404' in error_message or 'received 404 http response' in error_message:
-                        logger.warning(
-                            f"Encountered 404 while fetching r/{subreddit_name}: {e}. Continuing with no posts"
-                        )
-                        posts, comments = [], []
-                        break
-                    if '429' in error_message or 'too many requests' in error_message:
-                        attempts += 1
-                        if attempts >= max_attempts:
-                            logger.error(
-                                f"Rate limit exceeded for r/{subreddit_name} after {attempts} attempts"
-                            )
-                            self.session.rollback()
-                            self.stats['errors'].append(
-                                f"Rate limit: r/{subreddit_name} after {attempts} attempts"
-                            )
-                            return self.stats
-                        wait_seconds = max(self.fetcher.config.rate_limit_delay, 1.0) * (2 ** attempts)
-                        logger.warning(
-                            f"Rate limited when fetching r/{subreddit_name}. "
-                            f"Retrying in {wait_seconds:.1f} seconds (attempt {attempts}/{max_attempts})"
-                        )
-                        time.sleep(wait_seconds)
-                        continue
-                    else:
-                        raise
-
+        if not subreddit_id:
+            logger.error(f"Failed to process subreddit {subreddit_name}")
+            return self.stats
+        
+        posts, comments = self.fetcher.fetch_posts_and_comments(
+            subreddit_name, start_time, end_time, fetch_comments, sort_by
+        )
+        try:
             # Process posts
             for post_data in posts:
                 # Ensure subreddit_id is set
@@ -320,11 +241,13 @@ class RedditDataPipeline:
 
         except Exception as e:
             logger.error(f"Error in fetch_and_store_subreddit: {e}")
-            self.stats['errors'].append(f"Pipeline error: {e}")
+            self.stats.errors.append(f"Pipeline error: {e}")
             self.session.rollback()
+            raise e
 
         logger.info(f"Completed: {self.stats}")
         return self.stats
+        return asdict(self.stats)
 
     def fetch_multiple_subreddits(
         self,
@@ -332,7 +255,7 @@ class RedditDataPipeline:
         start_time: datetime,
         end_time: datetime,
         fetch_comments: bool = True
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> Dict[str, Dict[str, FetchStatistics]]:
         """
         Fetch and store data from multiple subreddits
 
@@ -356,7 +279,7 @@ class RedditDataPipeline:
 
         return all_stats
 
-    def update_stale_posts(self, hours_old: int = 6) -> Dict[str, Any]:
+    def update_stale_posts(self, hours_old: int = 6) -> StaleStatistics:
         """
         Update posts that haven't been scraped recently
 
@@ -369,11 +292,7 @@ class RedditDataPipeline:
         logger.info(f"Updating posts older than {hours_old} hours")
 
         # Reset stats
-        self.stats = {
-            'posts_updated': 0,
-            'comments_added': 0,
-            'errors': []
-        }
+        stale_stats = StaleStatistics()
 
         try:
             # Get posts that need updating
@@ -382,10 +301,10 @@ class RedditDataPipeline:
             for post in stale_posts:
                 try:
                     # Extract the post ID without prefix
-                    post_id = post.post_id[3:] if post.post_id.startswith('t3_') else post.post_id
+                    post_id = post.post_id[len(RedditIdPrefix.POST.value)] if bool(post.post_id.startswith(RedditIdPrefix.POST.value)) else post.post_id
 
                     # Fetch updated post data
-                    submission = self.fetcher.reddit.submission(id=post_id)
+                    submission = self.fetcher.reddit.submission(id=str(post_id))
                     post_data = self.fetcher._extract_post_data(submission)
 
                     # Update post
@@ -393,29 +312,29 @@ class RedditDataPipeline:
                         post_id=post.post_id,
                         score=post_data.score,
                         num_comments=post_data.num_comments,
-                        last_scraped_utc=datetime.utcnow()
+                        last_scraped_utc=datetime.now()
                     )
-                    self.stats['posts_updated'] += 1
+                    stale_stats.posts_updated += 1
 
                     # Fetch new comments
-                    comments = self.fetcher.fetch_comments_for_post(post_id)
+                    comments = self.fetcher.fetch_comments_for_post(str(post_id))
                     for comment_data in comments:
                         if self._process_comment(comment_data):
-                            self.stats['comments_added'] += 1
+                            stale_stats.comments_added += 1
 
                 except Exception as e:
                     logger.error(f"Error updating post {post.post_id}: {e}")
-                    self.stats['errors'].append(f"Update error for {post.post_id}: {e}")
+                    stale_stats.errors.append(f"Update error for {post.post_id}: {e}")
 
             self.session.commit()
 
         except Exception as e:
             logger.error(f"Error in update_stale_posts: {e}")
-            self.stats['errors'].append(f"Update pipeline error: {e}")
+            stale_stats.errors.append(f"Update pipeline error: {e}")
             self.session.rollback()
 
         logger.info(f"Update completed: {self.stats}")
-        return self.stats
+        return stale_stats
 
     def stream_and_store(
         self,

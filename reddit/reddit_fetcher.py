@@ -142,8 +142,6 @@ class RedditFetcher:
                 return func(*args, **kwargs)
             except (PrawcoreException, RequestException) as exc:
                 wait_time = self._retry_delay_seconds(exc, base_wait * (EXP_BASE ** attempt))
-            except Exception as exc:
-                wait_time = self._retry_delay_seconds(exc, base_wait * (EXP_BASE ** attempt))
 
             if wait_time is None:
                 raise

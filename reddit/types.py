@@ -123,6 +123,23 @@ class RawComment:
     is_stickied: Optional[bool] = None
     depth: int = 0
 
+@dataclass
+class FetchStatistics:
+    """Statistics tracked by the fetcher/pipeline"""
+    subreddits_processed: int = 0
+    posts_processed: int = 0
+    comments_processed: int = 0
+    authors_processed: int = 0
+    errors: list = []
+
+@dataclass
+class StaleStatistics:
+    """Statistics tracked by the fetcher/pipeline when updating old posts"""
+    posts_updated: int = 0
+    comments_added: int = 0
+    errors: list = []
+
+
 
 __all__ = [
     "RedditMarker",
